@@ -120,9 +120,9 @@ class NoteService {
         }
       );
       
-      // 然后更新元数据，添加标题和类型
+      // 然后更新元数据，添加标题和父级ID
       if (response.data.data) {
-        await this.updateNoteTitle(key, title, { type: 'note', parent_id: parentId });
+        await this.updateNoteTitle(key, title, { parent_id: parentId });
         // 重新获取更新后的对象信息
         const metadataResponse = await apiClient.get(`/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`);
         return metadataResponse.data.data;
@@ -183,31 +183,7 @@ class NoteService {
     }
   }
 
-  // 创建新文件夹
-  async createFolder(title: string, parentId: string = ''): Promise<Note | null> {
-    const key = `${Math.random().toString(36).substring(2, 15)}.folder`;
-    const user_metadata = { title, type: 'folder', parent_id: parentId };
-    
-    await this.ensureBucketExists();
-    try {
-      // 创建一个空内容的"文件夹对象"
-      const response = await apiClient.put(
-        `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}?deduplication_mode=allow`,
-        '', // 空内容
-        { 
-          headers: { 'Content-Type': 'application/x-empty' } 
-        }
-      );
-      
-      // 更新元数据
-      await this.updateNoteTitle(key, title, { type: 'folder', parent_id: parentId });
-      const metadataResponse = await apiClient.get(`/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`);
-      return metadataResponse.data.data;
-    } catch (error) {
-      console.error('Failed to create folder:', error);
-      return null;
-    }
-  }
+
 
   // 获取笔记元数据
   async getNoteMetadata(key: string): Promise<Note | null> {

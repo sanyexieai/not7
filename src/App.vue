@@ -15,33 +15,16 @@
         </button>
       </div>
       <div class="notes-list" @contextmenu="showContextMenu($event, null)">
-        <div 
-          v-for="note in notes" 
-          :key="note.id"
-          :class="['note-item', { active: selectedNote?.key === note.key }]"
-          :data-note-key="note.key"
-          @click="selectNote(note)"
-          @contextmenu.stop="showContextMenu($event, note)"
-        >
-          <div class="note-title">
-            <input
-              v-if="editingTitle === note.key"
-              :value="getNoteTitleSync(note.key)"
-              @keyup.enter="updateNoteTitle(note.key, ($event.target as HTMLInputElement).value)"
-              @keyup.esc="cancelEditTitle"
-              @blur="updateNoteTitle(note.key, ($event.target as HTMLInputElement).value)"
-              :ref="(el) => { if (el) titleInputs.set(note.key, el as HTMLInputElement); }"
-              class="title-input"
-              :data-note-key="note.key"
-            />
-            <span v-else @dblclick="startEditTitle(note.key)" class="title-text">
-              {{ getNoteTitleSync(note.key) }}
-            </span>
-          </div>
-          <div class="note-meta">
-            {{ formatDate(note.last_modified) }}
-          </div>
-        </div>
+        <NoteTree 
+          :notes="notes"
+          :selected-note="selectedNote"
+          :editing-title="editingTitle"
+          @select="selectNote"
+          @edit-title="startEditTitle"
+          @update-title="updateNoteTitle"
+          @cancel-edit="cancelEditTitle"
+          @context-menu="showContextMenu"
+        />
       </div>
       
       <!-- 右键菜单 -->
@@ -52,12 +35,6 @@
         @click.stop
       >
 
-        <div @click="createNewFolder" class="context-item">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-5l-2-2H5a2 2 0 0 0-2 2z"></path>
-          </svg>
-          新建文件夹
-        </div>
         <div @click="createNewNoteInContext" class="context-item">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -149,9 +126,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, onUnmounted } from 'vue';
+import { ref, onMounted, nextTick, onUnmounted, watch } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { noteService, type Note } from './api/noteService';
+import NoteTree from './components/NoteTree.vue';
 import 'vditor/dist/index.css';
+
+// 路由相关
+const router = useRouter();
+const route = useRoute();
+
+// Props
+interface Props {
+  selectedNoteKey?: string | null;
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  selectedNoteKey: null
+});
 
 const notes = ref<Note[]>([]);
 const selectedNote = ref<Note | null>(null);
@@ -256,6 +248,14 @@ const initVditor = async () => {
 
 const selectNote = async (note: Note) => {
   selectedNote.value = note;
+  
+  // 更新路由
+  if (route.name === 'Note') {
+    router.push({ name: 'Note', params: { key: note.key } });
+  } else {
+    router.push({ name: 'Home', query: { note: note.key } });
+  }
+  
   isNoteLoading.value = true; // 开始加载
   await nextTick();
   
@@ -391,7 +391,7 @@ const startEditTitle = async (key: string) => {
   
   if (input) {
     input.focus();
-    // 不自动全选，让用户可以自由编辑
+    // 光标放在文字末尾，不自动全选
     input.setSelectionRange(input.value.length, input.value.length);
   }
 };
@@ -422,7 +422,8 @@ const startEditMainTitle = async () => {
   const input = document.querySelector('.main-title-input') as HTMLInputElement;
   if (input) {
     input.focus();
-    input.select();
+    // 光标放在文字末尾，不自动全选
+    input.setSelectionRange(input.value.length, input.value.length);
   }
 };
 
@@ -445,32 +446,10 @@ const toggleSidebar = () => {
       };
     };
 
-const createNewFolder = async () => {
-  const folderName = prompt('请输入文件夹名称');
-  if (!folderName?.trim()) return;
-  
-  try {
-    // 如果右键点击的是文件夹，则在该文件夹下创建子文件夹
-    const parentId = contextMenu.value.item?.user_metadata?.type === 'folder' 
-      ? contextMenu.value.item.key 
-      : contextMenu.value.item?.user_metadata?.parent_id || '';
-    
-    const newFolder = await noteService.createFolder(folderName.trim(), parentId);
-    if (newFolder) {
-      await loadNotes(); // 重新加载列表
-    }
-  } catch (error) {
-    console.error('Failed to create folder:', error);
-  }
-  contextMenu.value.show = false;
-};
-
 const createNewNoteInContext = async () => {
   try {
-    // 如果右键点击的是文件夹，则在该文件夹下创建笔记
-    const parentId = contextMenu.value.item?.user_metadata?.type === 'folder' 
-      ? contextMenu.value.item.key 
-      : contextMenu.value.item?.user_metadata?.parent_id || '';
+    // 如果右键点击的是笔记，则在该笔记下创建子笔记
+    const parentId = contextMenu.value.item?.key || '';
     
     const newNote = await noteService.createNote('新笔记', '', parentId);
     if (newNote) {
@@ -485,6 +464,8 @@ const createNewNoteInContext = async () => {
   }
   contextMenu.value.show = false;
 };
+
+
 
 const renameContextItem = () => {
   if (contextMenu.value.item) {
@@ -539,6 +520,31 @@ onMounted(() => {
   document.addEventListener('keydown', handleKeydown);
   // 添加点击外部关闭右键菜单监听器
   document.addEventListener('click', handleClickOutside);
+});
+
+// 监听路由变化
+watch(() => props.selectedNoteKey, async (newKey) => {
+  if (newKey) {
+    const note = notes.value.find(n => n.key === newKey);
+    if (note) {
+      await selectNote(note);
+    }
+  } else {
+    selectedNote.value = null;
+    if (vditor.value) {
+      vditor.value.setValue('');
+    }
+  }
+}, { immediate: true });
+
+// 监听笔记列表变化，如果当前选中的笔记不在列表中，清除选择
+watch(notes, () => {
+  if (selectedNote.value && !notes.value.find(n => n.key === selectedNote.value?.key)) {
+    selectedNote.value = null;
+    if (vditor.value) {
+      vditor.value.setValue('');
+    }
+  }
 });
 
 onUnmounted(() => {
