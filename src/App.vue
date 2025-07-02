@@ -931,6 +931,10 @@ onUnmounted(() => {
     background: rgba(255, 255, 255, 0.05);
   }
   
+  .save-hint {
+    color: #aaa;
+  }
+  
   .sidebar-toggle-btn {
     background: rgba(35, 39, 46, 0.8) !important;
     color: #ccc !important;
