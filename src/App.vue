@@ -1,11 +1,17 @@
 <template>
   <div class="app">
     <!-- 侧边栏 -->
-    <aside class="sidebar">
+    <aside v-if="!sidebarCollapsed" class="sidebar">
       <div class="sidebar-header">
         <h1>Not7</h1>
         <button @click="createNewNote" class="new-note-btn">
           <span>+</span> 新建笔记
+        </button>
+        <button @click="toggleSidebar" class="sidebar-toggle-btn" title="收起侧边栏">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
         </button>
       </div>
       <div class="notes-list">
@@ -35,12 +41,38 @@
         </div>
       </div>
     </aside>
+    
     <!-- 主内容区 -->
     <main class="main-content">
       <div v-if="selectedNote" class="editor-container">
         <div class="editor-header">
+          <button v-if="sidebarCollapsed" @click="toggleSidebar" class="sidebar-toggle-btn" title="展开侧边栏">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
+          <!-- 笔记标题显示和编辑 -->
+          <div class="note-title-display">
+            <input
+              v-if="editingMainTitle"
+              :value="getNoteTitleSync(selectedNote.key)"
+              @blur="updateNoteTitle(selectedNote.key, ($event.target as HTMLInputElement).value)"
+              @keyup.enter="updateNoteTitle(selectedNote.key, ($event.target as HTMLInputElement).value)"
+              @keyup.esc="cancelEditMainTitle"
+              class="main-title-input"
+            />
+            <h2 v-else @dblclick="startEditMainTitle" class="main-title-text">
+              {{ getNoteTitleSync(selectedNote.key) }}
+            </h2>
+          </div>
+          
           <div class="editor-actions">
-            <button @click="saveNote" class="save-btn">保存</button>
+            <div v-if="saveSuccess" class="save-success">✓ 已保存</div>
+            <button @click="saveNote" :disabled="isSaving" class="save-btn">
+              {{ isSaving ? '保存中...' : '保存' }}
+            </button>
             <button @click="deleteCurrentNote" class="delete-btn">删除</button>
           </div>
         </div>
@@ -55,7 +87,14 @@
         <div id="vditor" class="vditor-container"></div>
       </div>
       <div v-else class="empty-state">
-        <div class="empty-icon">📝</div>
+        <button v-if="sidebarCollapsed" @click="toggleSidebar" class="sidebar-toggle-btn" title="展开侧边栏">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </button>
+        <div class="empty-icon">👋</div>
         <h2>欢迎使用 Not7</h2>
         <p>点击左侧"新建笔记"开始记录你的想法</p>
       </div>
@@ -72,10 +111,14 @@ const notes = ref<Note[]>([]);
 const selectedNote = ref<Note | null>(null);
 const isLoading = ref(false);
 const isNoteLoading = ref(false);
+const isSaving = ref(false);
+const saveSuccess = ref(false);
+const sidebarCollapsed = ref(false);
 const vditor = ref<any | null>(null);
 const saveTimeout = ref<number | null>(null);
 const editingTitle = ref<string | null>(null);
 const titleInput = ref<HTMLInputElement | null>(null);
+const editingMainTitle = ref(false);
 
 const getNoteTitleSync = (key: string) => {
   // 从笔记列表中查找对应的笔记，获取其 user_metadata 中的标题
@@ -244,6 +287,9 @@ const createNewNote = async () => {
 const saveNote = async () => {
   if (!selectedNote.value || !vditor.value) return;
   try {
+    isSaving.value = true;
+    saveSuccess.value = false;
+    
     const content = vditor.value.getValue();
     // 使用当前笔记的标题，而不是从内容中提取
     const currentTitle = getNoteTitleSync(selectedNote.value.key);
@@ -257,9 +303,16 @@ const saveNote = async () => {
       if (index !== -1) {
         notes.value[index] = updatedNote;
       }
+      // 显示保存成功提示
+      saveSuccess.value = true;
+      setTimeout(() => {
+        saveSuccess.value = false;
+      }, 2000);
     }
   } catch (error) {
     console.error('Failed to save note:', error);
+  } finally {
+    isSaving.value = false;
   }
 };
 
@@ -313,6 +366,24 @@ const cancelEditTitle = () => {
   editingTitle.value = null;
 };
 
+const startEditMainTitle = async () => {
+  editingMainTitle.value = true;
+  await nextTick();
+  const input = document.querySelector('.main-title-input') as HTMLInputElement;
+  if (input) {
+    input.focus();
+    input.select();
+  }
+};
+
+const cancelEditMainTitle = () => {
+  editingMainTitle.value = false;
+};
+
+const toggleSidebar = () => {
+  sidebarCollapsed.value = !sidebarCollapsed.value;
+};
+
 onMounted(() => {
   loadNotes();
 });
@@ -331,26 +402,47 @@ onUnmounted(() => {
 .app {
   display: flex;
   height: 100vh;
+  width: 100vw;
   background: var(--bg-main, #f6f8fa);
   color: var(--text-main, #222);
   transition: background 0.2s, color 0.2s;
+  overflow: hidden;
 }
 
 .sidebar {
   width: 280px;
+  min-width: 280px;
+  max-width: 280px;
   background: var(--sidebar-bg, #fff);
   border-right: 1px solid #e5e7eb;
   box-shadow: 2px 0 8px 0 rgba(0,0,0,0.03);
   display: flex;
   flex-direction: column;
   z-index: 2;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateX(0);
+  flex-shrink: 0;
+}
+
+.sidebar.collapsed {
+  transform: translateX(-100%);
+  box-shadow: none;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
 }
 
 .sidebar-header {
+  position: relative;
   padding: 24px 20px 16px 20px;
   border-bottom: 1px solid #e5e7eb;
   background: var(--sidebar-bg, #fff);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
+
 .sidebar-header h1 {
   margin: 0 0 18px 0;
   font-size: 22px;
@@ -358,6 +450,7 @@ onUnmounted(() => {
   letter-spacing: 1px;
   color: var(--primary, #1976d2);
 }
+
 .new-note-btn {
   width: 100%;
   padding: 10px 0;
@@ -371,15 +464,52 @@ onUnmounted(() => {
   transition: background 0.2s;
   box-shadow: 0 2px 8px 0 rgba(25, 118, 210, 0.08);
 }
+
 .new-note-btn:hover {
   background: #1251a3;
+}
+
+.sidebar-toggle-btn {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.8);
+  color: #666;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.sidebar-toggle-btn:hover {
+  background: rgba(255, 255, 255, 1);
+  color: #333;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.sidebar-toggle-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .notes-list {
   flex: 1;
   overflow-y: auto;
   padding: 10px 0 10px 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
+
 .note-item {
   padding: 14px 24px 10px 24px;
   margin-bottom: 6px;
@@ -388,15 +518,22 @@ onUnmounted(() => {
   background: transparent;
   transition: background 0.18s, color 0.18s;
   border-left: 3px solid transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
 }
+
 .note-item.active {
   background: var(--primary-light, #e3f2fd);
   color: var(--primary, #1976d2);
   border-left: 3px solid var(--primary, #1976d2);
 }
+
 .note-item:hover {
   background: #f0f4fa;
 }
+
 .note-title {
   font-weight: 600;
   font-size: 16px;
@@ -404,12 +541,17 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  min-width: 0;
 }
+
 .title-text {
   cursor: pointer;
   display: block;
   width: 100%;
 }
+
 .title-input {
   width: 100%;
   border: none;
@@ -422,12 +564,14 @@ onUnmounted(() => {
   margin: 0;
   font-family: inherit;
 }
+
 .title-input:focus {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 4px;
   padding: 2px 4px;
   margin: -2px -4px;
 }
+
 .note-meta {
   font-size: 12px;
   color: #888;
@@ -439,7 +583,11 @@ onUnmounted(() => {
   flex-direction: column;
   background: var(--main-bg, #f6f8fa);
   min-width: 0;
+  width: 100%;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
 }
+
 .editor-container {
   flex: 1;
   display: flex;
@@ -449,21 +597,71 @@ onUnmounted(() => {
   box-shadow: 0 2px 12px 0 rgba(0,0,0,0.04);
   margin: 24px 24px 24px 0;
   padding: 0;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  min-height: 0;
+  overflow: hidden;
 }
+
 .editor-header {
   padding: 16px 24px;
   border-bottom: 1px solid #e5e7eb;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 10px;
   background: var(--editor-bg, #fff);
   border-radius: 0 12px 0 0;
+  flex-shrink: 0;
+  min-height: 0;
 }
+
+.note-title-display {
+  flex: 1;
+  min-width: 0;
+}
+
+.main-title-text {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-main, #222);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.2s;
+}
+
+.main-title-text:hover {
+  color: var(--primary, #1976d2);
+}
+
+.main-title-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-main, #222);
+  outline: none;
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+}
+
+.main-title-input:focus {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+}
+
 .editor-actions {
   display: flex;
+  align-items: center;
   gap: 10px;
 }
+
 .save-btn, .delete-btn {
   padding: 8px 18px;
   border: none;
@@ -473,20 +671,37 @@ onUnmounted(() => {
   cursor: pointer;
   transition: background 0.18s;
 }
+
 .save-btn {
   background: #43a047;
   color: #fff;
 }
+
 .save-btn:hover {
   background: #2e7031;
 }
+
 .delete-btn {
   background: #e53935;
   color: #fff;
 }
+
 .delete-btn:hover {
   background: #a02725;
 }
+
+.save-success {
+  color: #43a047;
+  font-size: 14px;
+  font-weight: 500;
+  animation: fadeInOut 2s ease-in-out;
+}
+
+@keyframes fadeInOut {
+  0%, 100% { opacity: 0; }
+  20%, 80% { opacity: 1; }
+}
+
 .empty-state {
   flex: 1;
   display: flex;
@@ -494,24 +709,70 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   color: #b0b0b0;
+  position: relative;
 }
+
 .empty-icon {
   font-size: 64px;
   margin-bottom: 20px;
 }
+
 .empty-state h2 {
   margin: 0 0 10px 0;
   color: #888;
 }
+
 .empty-state p {
   margin: 0;
   font-size: 16px;
+}
+
+.main-content .sidebar-toggle-btn,
+.empty-state .sidebar-toggle-btn {
+  position: static;
+  margin-right: 12px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: var(--primary-light, #e3f2fd);
+  color: var(--primary, #1976d2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
+}
+
+.main-content .sidebar-toggle-btn:hover,
+.empty-state .sidebar-toggle-btn:hover {
+  background: var(--primary, #1976d2);
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(25, 118, 210, 0.25);
+}
+
+.empty-state .sidebar-toggle-btn {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  margin-right: 0;
 }
 
 .vditor-container {
   flex: 1;
   border-radius: 0 0 12px 0;
   position: relative;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar.collapsed ~ .main-content .vditor-container {
+  border-radius: 0 0 12px 12px;
+  width: 100% !important;
 }
 
 .loading-overlay {
@@ -639,6 +900,41 @@ onUnmounted(() => {
   .note-item:hover {
     background: #23272e;
   }
+  
+  .main-title-input:focus {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  
+  .title-input:focus {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  
+  .sidebar-toggle-btn {
+    background: rgba(35, 39, 46, 0.8) !important;
+    color: #ccc !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+  }
+  
+  .sidebar-toggle-btn:hover {
+    background: rgba(35, 39, 46, 1) !important;
+    color: #fff !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+  }
+  
+  .main-content .sidebar-toggle-btn,
+  .empty-state .sidebar-toggle-btn {
+    background: var(--primary-light, #1e293b) !important;
+    color: var(--primary, #90caf9) !important;
+    box-shadow: 0 2px 8px rgba(144, 202, 249, 0.15) !important;
+  }
+  
+  .main-content .sidebar-toggle-btn:hover,
+  .empty-state .sidebar-toggle-btn:hover {
+    background: var(--primary, #90caf9) !important;
+    color: #1e293b !important;
+    box-shadow: 0 4px 16px rgba(144, 202, 249, 0.25) !important;
+  }
 }
 
 ::-webkit-scrollbar {
@@ -659,6 +955,11 @@ onUnmounted(() => {
 #vditor {
   border: none !important;
   border-radius: 0 0 12px 0 !important;
+}
+
+.sidebar.collapsed ~ .main-content #vditor {
+  border-radius: 0 0 12px 12px !important;
+  width: 100% !important;
 }
 
 #vditor .vditor-toolbar {
