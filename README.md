@@ -1,7 +1,225 @@
-# Tauri + Vue + TypeScript
+# Not7 - 智能笔记应用
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Not7 是一个基于 Vue 3 + Tauri 构建的现代化笔记应用，支持 Markdown 编辑和实时预览，具有简洁美观的界面和强大的功能。
 
-## Recommended IDE Setup
+## ✨ 主要特性
 
-- [VS Code](https://code.visualstudio.com/) + [Vue - Official](https://marketplace.visualstudio.com/items?itemName=Vue.volar) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+### 📝 编辑功能
+- **Markdown 支持**：完整的 Markdown 语法支持，包括标题、列表、代码块、表格等
+- **实时预览**：即时渲染模式，所见即所得
+- **富文本工具栏**：提供常用 Markdown 语法的快捷插入按钮
+- **自动保存**：支持自动保存（2秒延迟）和手动保存
+- **快捷键支持**：`Ctrl+S`（Windows/Linux）或 `Cmd+S`（Mac）快速保存
+
+### 🗂️ 文件管理
+- **笔记列表**：侧边栏显示所有笔记，支持标题编辑
+- **新建笔记**：一键创建新笔记
+- **删除笔记**：安全删除不需要的笔记
+- **标题管理**：双击编辑笔记标题
+
+### 🎨 界面设计
+- **响应式布局**：适配桌面和移动设备
+- **深色模式**：自动跟随系统主题，支持浅色/深色模式切换
+- **侧边栏折叠**：可折叠侧边栏，最大化编辑区域
+- **现代化 UI**：简洁美观的 Material Design 风格
+
+### 💾 数据存储
+- **云端存储**：基于对象存储服务，数据安全可靠
+- **离线编辑**：支持离线编辑，联网时自动同步
+- **版本控制**：自动保存历史版本，防止数据丢失
+
+## 🛠️ 技术栈
+
+### 前端
+- **Vue 3**：现代化的前端框架
+- **TypeScript**：类型安全的 JavaScript
+- **Vite**：快速的构建工具
+- **Vditor**：强大的 Markdown 编辑器
+- **CSS3**：现代化的样式设计
+
+### 桌面应用
+- **Tauri**：跨平台桌面应用框架
+- **Rust**：高性能的后端语言
+
+### 后端服务
+- **对象存储**：支持多种云存储服务
+- **RESTful API**：标准化的数据接口
+
+## 📦 安装和运行
+
+### 环境要求
+- Node.js 16+ 
+- Rust 1.70+
+- 支持的操作系统：Windows、macOS、Linux
+
+### 安装步骤
+
+1. **克隆项目**
+   ```bash
+   git clone <repository-url>
+   cd not7
+   ```
+
+2. **安装依赖**
+   ```bash
+   # 安装前端依赖
+   npm install
+   
+   # 安装 Rust 依赖（首次运行会自动安装）
+   ```
+
+3. **配置后端**
+   - 在 `src/api/noteService.ts` 中配置你的对象存储服务信息
+   - 确保 bucket 名称为 "not7"
+
+4. **运行开发环境**
+   ```bash
+   # 开发模式
+   npm run tauri dev
+   
+   # 或者分别运行前端和后端
+   npm run dev          # 前端开发服务器
+   npm run tauri dev    # Tauri 开发模式
+   ```
+
+5. **构建生产版本**
+   ```bash
+   npm run tauri build
+   ```
+
+## 🚀 使用指南
+
+### 基本操作
+
+#### 创建笔记
+1. 点击侧边栏的 "新建笔记" 按钮
+2. 系统会自动创建一个新的笔记并选中它
+3. 开始输入内容，支持 Markdown 语法
+
+#### 编辑笔记
+1. 在左侧笔记列表中点击要编辑的笔记
+2. 使用富文本工具栏插入 Markdown 语法
+3. 内容会自动保存，也可以使用 `Ctrl+S` 手动保存
+
+#### 管理笔记标题
+- **双击标题**：在侧边栏或主界面双击标题进行编辑
+- **自动提取**：系统会从内容第一行自动提取标题
+- **手动设置**：可以手动设置任意标题
+
+#### 删除笔记
+1. 选中要删除的笔记
+2. 点击编辑器头部的 "删除" 按钮
+3. 确认删除操作
+
+### 快捷键
+
+| 快捷键 | 功能 | 说明 |
+|--------|------|------|
+| `Ctrl+S` / `Cmd+S` | 保存笔记 | 快速保存当前笔记 |
+| `Ctrl+N` | 新建笔记 | 创建新笔记（如果支持） |
+| `Ctrl+Z` | 撤销 | 撤销上一步操作 |
+| `Ctrl+Y` | 重做 | 重做上一步操作 |
+
+### Markdown 语法支持
+
+#### 基础语法
+- **标题**：`# 一级标题`、`## 二级标题`
+- **粗体**：`**粗体文本**`
+- **斜体**：`*斜体文本*`
+- **删除线**：`~~删除的文本~~`
+- **链接**：`[链接文本](URL)`
+- **图片**：`![图片描述](图片URL)`
+
+#### 列表
+- **无序列表**：`- 项目1`、`* 项目2`
+- **有序列表**：`1. 第一项`、`2. 第二项`
+- **任务列表**：`- [ ] 待办事项`、`- [x] 已完成`
+
+#### 代码
+- **行内代码**：`` `代码` ``
+- **代码块**：``` ```代码块``` ```
+
+#### 其他
+- **引用**：`> 引用文本`
+- **分割线**：`---`
+- **表格**：使用 `|` 分隔列，`-` 分隔表头
+
+## 🔧 配置说明
+
+### API 配置
+在 `src/api/noteService.ts` 中配置你的后端服务：
+
+```typescript
+const API_BASE_URL = 'your-api-endpoint';
+const BUCKET_NAME = 'not7';
+```
+
+### 主题配置
+应用支持自动主题切换，会根据系统设置自动选择浅色或深色模式。
+
+## 📱 移动端支持
+
+应用采用响应式设计，在移动设备上：
+- 侧边栏会折叠为顶部导航栏
+- 笔记列表变为水平滚动
+- 编辑器适配触摸操作
+
+## 🔒 数据安全
+
+- 所有数据存储在云端对象存储服务中
+- 支持数据加密传输
+- 自动备份和版本控制
+- 本地缓存确保离线可用
+
+## 🐛 故障排除
+
+### 常见问题
+
+1. **应用无法启动**
+   - 检查 Node.js 和 Rust 版本
+   - 确保所有依赖已正确安装
+   - 查看控制台错误信息
+
+2. **无法保存笔记**
+   - 检查网络连接
+   - 验证 API 配置是否正确
+   - 确认对象存储服务状态
+
+3. **编辑器显示异常**
+   - 清除浏览器缓存
+   - 重新安装依赖
+   - 检查 Vditor 版本兼容性
+
+### 日志查看
+- 开发模式：查看浏览器开发者工具控制台
+- 生产模式：查看应用日志文件
+
+## 🤝 贡献指南
+
+欢迎提交 Issue 和 Pull Request！
+
+### 开发规范
+- 使用 TypeScript 编写代码
+- 遵循 Vue 3 Composition API 规范
+- 保持代码风格一致
+- 添加必要的注释和文档
+
+### 提交规范
+- 使用清晰的提交信息
+- 一个提交对应一个功能或修复
+- 确保代码通过所有测试
+
+## 📄 许可证
+
+本项目采用 MIT 许可证，详见 [LICENSE](LICENSE) 文件。
+
+## 🙏 致谢
+
+- [Vue.js](https://vuejs.org/) - 渐进式 JavaScript 框架
+- [Tauri](https://tauri.app/) - 跨平台桌面应用框架
+- [Vditor](https://github.com/Vanessa219/vditor) - 强大的 Markdown 编辑器
+- [Vite](https://vitejs.dev/) - 下一代前端构建工具
+
+---
+
+**Not7** - 让笔记记录更简单、更高效！

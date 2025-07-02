@@ -94,18 +94,18 @@ class NoteService {
   }
 
   // 创建新笔记
-  async createNote(title: string, content: string = ''): Promise<Note | null> {
+  async createNote(title: string, content: string = '', parentId: string = ''): Promise<Note | null> {
     const timestamp = Date.now();
     const randomId = Math.random().toString(36).substring(2, 15);
     // 使用随机ID作为文件名
     const key = `${randomId}.md`;
     
     // 直接保存内容，标题存储在元数据中
-    return await this.saveNote(key, title, content);
+    return await this.saveNote(key, title, content, parentId);
   }
 
   // 保存笔记
-  async saveNote(key: string, title: string, content: string): Promise<Note | null> {
+  async saveNote(key: string, title: string, content: string, parentId: string = ''): Promise<Note | null> {
     await this.ensureBucketExists();
     
     try {
@@ -120,9 +120,9 @@ class NoteService {
         }
       );
       
-      // 然后更新元数据，添加标题
+      // 然后更新元数据，添加标题和类型
       if (response.data.data) {
-        await this.updateNoteTitle(key, title);
+        await this.updateNoteTitle(key, title, { type: 'note', parent_id: parentId });
         // 重新获取更新后的对象信息
         const metadataResponse = await apiClient.get(`/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`);
         return metadataResponse.data.data;
@@ -148,16 +148,26 @@ class NoteService {
 
   // 更新笔记
   async updateNote(key: string, title: string, content: string): Promise<Note | null> {
-    return await this.saveNote(key, title, content);
+    // 先获取当前笔记的元数据以保持 parent_id
+    try {
+      const metadataResponse = await apiClient.get(`/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`);
+      const currentNote = metadataResponse.data.data;
+      const parentId = currentNote?.user_metadata?.parent_id || '';
+      return await this.saveNote(key, title, content, parentId);
+    } catch (error) {
+      // 如果获取元数据失败，使用空字符串作为 parent_id
+      return await this.saveNote(key, title, content, '');
+    }
   }
 
   // 更新笔记标题（只更新元数据）
-  async updateNoteTitle(key: string, title: string): Promise<Note | null> {
+  async updateNoteTitle(key: string, title: string, extraMeta: Record<string, any> = {}): Promise<Note | null> {
     try {
+      const user_metadata = { title, ...extraMeta };
       const response = await apiClient.put(
         `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`,
         {
-          user_metadata: { title: title }
+          user_metadata: user_metadata
         },
         {
           headers: {
@@ -169,6 +179,32 @@ class NoteService {
       return response.data.data;
     } catch (error) {
       console.error('Failed to update note title:', error);
+      return null;
+    }
+  }
+
+  // 创建新文件夹
+  async createFolder(title: string, parentId: string = ''): Promise<Note | null> {
+    const key = `${Math.random().toString(36).substring(2, 15)}.folder`;
+    const user_metadata = { title, type: 'folder', parent_id: parentId };
+    
+    await this.ensureBucketExists();
+    try {
+      // 创建一个空内容的"文件夹对象"
+      const response = await apiClient.put(
+        `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}?deduplication_mode=allow`,
+        '', // 空内容
+        { 
+          headers: { 'Content-Type': 'application/x-empty' } 
+        }
+      );
+      
+      // 更新元数据
+      await this.updateNoteTitle(key, title, { type: 'folder', parent_id: parentId });
+      const metadataResponse = await apiClient.get(`/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`);
+      return metadataResponse.data.data;
+    } catch (error) {
+      console.error('Failed to create folder:', error);
       return null;
     }
   }

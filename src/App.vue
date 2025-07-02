@@ -14,22 +14,25 @@
           </svg>
         </button>
       </div>
-      <div class="notes-list">
+      <div class="notes-list" @contextmenu="showContextMenu($event, null)">
         <div 
           v-for="note in notes" 
           :key="note.id"
           :class="['note-item', { active: selectedNote?.key === note.key }]"
+          :data-note-key="note.key"
           @click="selectNote(note)"
+          @contextmenu.stop="showContextMenu($event, note)"
         >
           <div class="note-title">
             <input
               v-if="editingTitle === note.key"
               :value="getNoteTitleSync(note.key)"
-              @blur="updateNoteTitle(note.key, ($event.target as HTMLInputElement).value)"
               @keyup.enter="updateNoteTitle(note.key, ($event.target as HTMLInputElement).value)"
               @keyup.esc="cancelEditTitle"
-              ref="titleInput"
+              @blur="updateNoteTitle(note.key, ($event.target as HTMLInputElement).value)"
+              :ref="(el) => { if (el) titleInputs.set(note.key, el as HTMLInputElement); }"
               class="title-input"
+              :data-note-key="note.key"
             />
             <span v-else @dblclick="startEditTitle(note.key)" class="title-text">
               {{ getNoteTitleSync(note.key) }}
@@ -39,6 +42,50 @@
             {{ formatDate(note.last_modified) }}
           </div>
         </div>
+      </div>
+      
+      <!-- 右键菜单 -->
+      <div 
+        v-if="contextMenu.show"
+        :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+        class="context-menu"
+        @click.stop
+      >
+
+        <div @click="createNewFolder" class="context-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-5l-2-2H5a2 2 0 0 0-2 2z"></path>
+          </svg>
+          新建文件夹
+        </div>
+        <div @click="createNewNoteInContext" class="context-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14,2 14,8 20,8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10,9 9,9 8,9"></polyline>
+          </svg>
+          新建笔记
+        </div>
+        <!-- 只有在右键点击具体项目时才显示重命名和删除选项 -->
+        <template v-if="contextMenu.item">
+          <div class="context-divider"></div>
+          <div @click="renameContextItem" class="context-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+            重命名
+          </div>
+          <div @click="deleteContextItem" class="context-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3,6 5,6 21,6"></polyline>
+              <path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"></path>
+            </svg>
+            删除
+          </div>
+        </template>
       </div>
     </aside>
     
@@ -73,7 +120,6 @@
             <button @click="saveNote" :disabled="isSaving" class="save-btn">
               {{ isSaving ? '保存中...' : '保存' }}
             </button>
-            <button @click="deleteCurrentNote" class="delete-btn">删除</button>
           </div>
         </div>
         
@@ -117,8 +163,16 @@ const sidebarCollapsed = ref(false);
 const vditor = ref<any | null>(null);
 const saveTimeout = ref<number | null>(null);
 const editingTitle = ref<string | null>(null);
-const titleInput = ref<HTMLInputElement | null>(null);
+const titleInputs = ref<Map<string, HTMLInputElement>>(new Map());
 const editingMainTitle = ref(false);
+
+// 右键菜单相关
+const contextMenu = ref({
+  show: false,
+  x: 0,
+  y: 0,
+  item: null as Note | null
+});
 
 const getNoteTitleSync = (key: string) => {
   // 从笔记列表中查找对应的笔记，获取其 user_metadata 中的标题
@@ -143,9 +197,7 @@ const formatDate = (dateString: string) => {
 const loadNotes = async () => {
   isLoading.value = true;
   try {
-    console.log('Loading notes list...');
     notes.value = await noteService.getNotes();
-    console.log('Notes loaded:', notes.value.length, 'notes');
   } catch (error) {
     console.error('Failed to load notes:', error);
   } finally {
@@ -184,7 +236,6 @@ const initVditor = async () => {
           '|', 'fullscreen', 'preview'
         ],
         after: () => {
-          console.log('Vditor initialized');
           resolve(); // 在 after 回调中解析 Promise
         },
         input: () => {
@@ -204,37 +255,29 @@ const initVditor = async () => {
 };
 
 const selectNote = async (note: Note) => {
-  console.log('selectNote called with note:', note.key);
   selectedNote.value = note;
   isNoteLoading.value = true; // 开始加载
   await nextTick();
   
   try {
-    console.log('Starting to download note content...');
     // 先获取笔记内容，确保文件完全下载
     const content = await noteService.getNoteContent(note.key);
-    console.log('Note content loaded:', content?.content?.length || 0, 'characters');
     
     // 确保 Vditor 已初始化
     if (!vditor.value) {
-      console.log('Vditor not initialized, initializing...');
       await initVditor(); // 等待 Vditor 完全初始化
-      console.log('Vditor initialization completed');
     }
     
     if (vditor.value) {
       // 确保内容是字符串类型
       const contentText = content?.content || '';
-      console.log('Setting content to Vditor:', contentText.length, 'characters');
       
       try {
         vditor.value.setValue(contentText);
         vditor.value.focus();
-        console.log('Note loaded successfully');
       } catch (setValueError) {
         console.error('Error setting Vditor value:', setValueError);
         // 如果设置值失败，尝试重新初始化
-        console.log('Retrying Vditor initialization...');
         await initVditor();
         if (vditor.value) {
           vditor.value.setValue(contentText);
@@ -253,23 +296,19 @@ const selectNote = async (note: Note) => {
     }
   } finally {
     isNoteLoading.value = false; // 结束加载
-    console.log('selectNote completed');
   }
 };
 
 const createNewNote = async () => {
   try {
     isNoteLoading.value = true; // 开始加载
-    console.log('Creating new note...');
     const newNote = await noteService.createNote('新笔记', '');
     if (newNote) {
-      console.log('New note created:', newNote.key);
       // 重新加载笔记列表以确保数据一致性
       await loadNotes();
       // 找到新创建的笔记并选择它
       const createdNote = notes.value.find(n => n.key === newNote.key);
       if (createdNote) {
-        console.log('Found created note in list, selecting...');
         await selectNote(createdNote);
       } else {
         console.error('Created note not found in list');
@@ -339,10 +378,21 @@ const deleteCurrentNote = async () => {
 
 const startEditTitle = async (key: string) => {
   editingTitle.value = key;
+  // 等待两个 tick 确保 DOM 完全更新
   await nextTick();
-  if (titleInput.value) {
-    titleInput.value.focus();
-    titleInput.value.select();
+  await nextTick();
+  
+  // 尝试多种方式获取输入框
+  let input = titleInputs.value.get(key);
+  if (!input) {
+    // 如果 Map 中没有，尝试通过 DOM 查询
+    input = document.querySelector(`[data-note-key="${key}"] .title-input`) as HTMLInputElement;
+  }
+  
+  if (input) {
+    input.focus();
+    // 不自动全选，让用户可以自由编辑
+    input.setSelectionRange(input.value.length, input.value.length);
   }
 };
 
@@ -384,6 +434,94 @@ const toggleSidebar = () => {
   sidebarCollapsed.value = !sidebarCollapsed.value;
 };
 
+// 右键菜单相关方法
+    const showContextMenu = (event: MouseEvent, note: Note | null) => {
+      event.preventDefault();
+      contextMenu.value = {
+        show: true,
+        x: event.clientX,
+        y: event.clientY,
+        item: note
+      };
+    };
+
+const createNewFolder = async () => {
+  const folderName = prompt('请输入文件夹名称');
+  if (!folderName?.trim()) return;
+  
+  try {
+    // 如果右键点击的是文件夹，则在该文件夹下创建子文件夹
+    const parentId = contextMenu.value.item?.user_metadata?.type === 'folder' 
+      ? contextMenu.value.item.key 
+      : contextMenu.value.item?.user_metadata?.parent_id || '';
+    
+    const newFolder = await noteService.createFolder(folderName.trim(), parentId);
+    if (newFolder) {
+      await loadNotes(); // 重新加载列表
+    }
+  } catch (error) {
+    console.error('Failed to create folder:', error);
+  }
+  contextMenu.value.show = false;
+};
+
+const createNewNoteInContext = async () => {
+  try {
+    // 如果右键点击的是文件夹，则在该文件夹下创建笔记
+    const parentId = contextMenu.value.item?.user_metadata?.type === 'folder' 
+      ? contextMenu.value.item.key 
+      : contextMenu.value.item?.user_metadata?.parent_id || '';
+    
+    const newNote = await noteService.createNote('新笔记', '', parentId);
+    if (newNote) {
+      await loadNotes();
+      const createdNote = notes.value.find(n => n.key === newNote.key);
+      if (createdNote) {
+        await selectNote(createdNote);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to create new note:', error);
+  }
+  contextMenu.value.show = false;
+};
+
+const renameContextItem = () => {
+  if (contextMenu.value.item) {
+    startEditTitle(contextMenu.value.item.key);
+  }
+  contextMenu.value.show = false;
+};
+
+const deleteContextItem = async () => {
+  if (contextMenu.value.item) {
+    if (confirm('确定要删除这个项目吗？')) {
+      try {
+        const success = await noteService.deleteNote(contextMenu.value.item.key);
+        if (success) {
+          notes.value = notes.value.filter(n => n.key !== contextMenu.value.item!.key);
+          if (selectedNote.value?.key === contextMenu.value.item.key) {
+            selectedNote.value = null;
+            if (vditor.value) {
+              vditor.value.setValue('');
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to delete item:', error);
+      }
+    }
+  }
+  contextMenu.value.show = false;
+};
+
+// 点击外部关闭右键菜单
+const handleClickOutside = (event: MouseEvent) => {
+  if (contextMenu.value.show) {
+    contextMenu.value.show = false;
+  }
+};
+
 // 键盘快捷键处理
 const handleKeydown = (event: KeyboardEvent) => {
   // Ctrl+S 保存
@@ -399,6 +537,8 @@ onMounted(() => {
   loadNotes();
   // 添加键盘事件监听器
   document.addEventListener('keydown', handleKeydown);
+  // 添加点击外部关闭右键菜单监听器
+  document.addEventListener('click', handleClickOutside);
 });
 
 onUnmounted(() => {
@@ -410,6 +550,8 @@ onUnmounted(() => {
   }
   // 移除键盘事件监听器
   document.removeEventListener('keydown', handleKeydown);
+  // 移除点击外部关闭右键菜单监听器
+  document.removeEventListener('click', handleClickOutside);
 });
 </script>
 
@@ -575,16 +717,17 @@ onUnmounted(() => {
   font-size: 16px;
   color: inherit;
   outline: none;
-  padding: 0;
-  margin: 0;
+  padding: 2px 4px;
+  margin: -2px -4px;
   font-family: inherit;
+  border-radius: 4px;
+  transition: background-color 0.2s;
 }
 
 .title-input:focus {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-  padding: 2px 4px;
-  margin: -2px -4px;
+  background: rgba(25, 118, 210, 0.1);
+  outline: 2px solid rgba(25, 118, 210, 0.3);
+  outline-offset: 2px;
 }
 
 .note-meta {
@@ -717,6 +860,38 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 400;
   opacity: 0.8;
+}
+
+/* 右键菜单样式 */
+.context-menu {
+  position: fixed;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  min-width: 160px;
+  padding: 4px 0;
+}
+
+.context-item {
+  padding: 8px 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+.context-item:hover {
+  background: #f8f9fa;
+}
+
+.context-divider {
+  height: 1px;
+  background: #e5e7eb;
+  margin: 4px 0;
 }
 
 @keyframes fadeInOut {
@@ -933,6 +1108,19 @@ onUnmounted(() => {
   
   .save-hint {
     color: #aaa;
+  }
+  
+  .context-menu {
+    background: #2d3748;
+    border-color: #4a5568;
+  }
+  
+  .context-item:hover {
+    background: #4a5568;
+  }
+  
+  .context-divider {
+    background: #4a5568;
   }
   
   .sidebar-toggle-btn {
