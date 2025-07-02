@@ -71,34 +71,19 @@ class NoteService {
   // 获取笔记内容
   async getNoteContent(key: string): Promise<NoteContent | null> {
     try {
-      const response = await apiClient.get(
-        `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}`,
-        { responseType: 'text' }
-      );
+      console.log('Downloading note content for key:', key);
+      const url = `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}`;
+      console.log('Request URL:', url);
+      
+      const response = await apiClient.get(url, { responseType: 'text' });
       
       const content = response.data;
+      console.log('Downloaded content length:', content?.length || 0);
       
-      // 只读取第一行作为标题，其余作为内容
-      const lines = content.split('\n');
-      let title = 'Untitled';
-      let noteContent = '';
-      
-      if (lines.length > 0) {
-        // 第一行作为标题（去掉Markdown标记）
-        const firstLine = lines[0].trim();
-        if (firstLine.startsWith('# ')) {
-          title = firstLine.substring(2); // 去掉 "# "
-        } else {
-          title = firstLine || 'Untitled';
-        }
-        
-        // 其余行作为内容
-        noteContent = lines.slice(1).join('\n').trim();
-      }
-      
+      // 返回完整的 Markdown 内容，标题存储在元数据中
       return {
-        title,
-        content: noteContent,
+        title: '', // 标题存储在 user_metadata 中，由前端获取
+        content: content,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
@@ -112,10 +97,10 @@ class NoteService {
   async createNote(title: string, content: string = ''): Promise<Note | null> {
     const timestamp = Date.now();
     const randomId = Math.random().toString(36).substring(2, 15);
-    // 使用标题作为文件名，确保一致性
-    const safeTitle = title.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_').substring(0, 50);
-    const key = `${safeTitle}_${timestamp}_${randomId}.md`;
+    // 使用随机ID作为文件名
+    const key = `${randomId}.md`;
     
+    // 直接保存内容，标题存储在元数据中
     return await this.saveNote(key, title, content);
   }
 
@@ -124,18 +109,24 @@ class NoteService {
     await this.ensureBucketExists();
     
     try {
-      // 将内容保存为Markdown格式
-      const fileContent = `# ${title}\n\n${content}`;
-      
+      // 先上传内容
       const response = await apiClient.put(
         `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}?deduplication_mode=allow`,
-        fileContent,
+        content,
         {
           headers: {
             'Content-Type': 'text/markdown'
           }
         }
       );
+      
+      // 然后更新元数据，添加标题
+      if (response.data.data) {
+        await this.updateNoteTitle(key, title);
+        // 重新获取更新后的对象信息
+        const metadataResponse = await apiClient.get(`/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`);
+        return metadataResponse.data.data;
+      }
       
       return response.data.data;
     } catch (error) {
@@ -160,6 +151,28 @@ class NoteService {
     return await this.saveNote(key, title, content);
   }
 
+  // 更新笔记标题（只更新元数据）
+  async updateNoteTitle(key: string, title: string): Promise<Note | null> {
+    try {
+      const response = await apiClient.put(
+        `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`,
+        {
+          user_metadata: { title: title }
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      return response.data.data;
+    } catch (error) {
+      console.error('Failed to update note title:', error);
+      return null;
+    }
+  }
+
   // 获取笔记元数据
   async getNoteMetadata(key: string): Promise<Note | null> {
     try {
@@ -168,42 +181,6 @@ class NoteService {
     } catch (error) {
       console.error('Failed to get note metadata:', error);
       return null;
-    }
-  }
-
-  // 获取笔记标题（只读取第一行）
-  async getNoteTitle(key: string): Promise<string> {
-    try {
-      // 只获取文件的前几行来提取标题
-      const response = await apiClient.get(
-        `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}`,
-        { 
-          responseType: 'text',
-          headers: {
-            'Range': 'bytes=0-1024' // 只读取前1KB，足够获取标题
-          }
-        }
-      );
-      
-      const content = response.data;
-      const firstLine = content.split('\n')[0].trim();
-      
-      if (firstLine.startsWith('# ')) {
-        return firstLine.substring(2); // 去掉 "# "
-      }
-      
-      return firstLine || 'Untitled';
-    } catch (error) {
-      // 如果获取失败，从文件名获取
-      const fileName = key.replace('.md', '');
-      const parts = fileName.split('_');
-      
-      if (parts.length >= 3) {
-        const titleParts = parts.slice(0, -2);
-        return titleParts.join('_') || 'Untitled';
-      }
-      
-      return fileName || 'Untitled';
     }
   }
 }
