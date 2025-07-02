@@ -384,8 +384,21 @@ const toggleSidebar = () => {
   sidebarCollapsed.value = !sidebarCollapsed.value;
 };
 
+// 键盘快捷键处理
+const handleKeydown = (event: KeyboardEvent) => {
+  // Ctrl+S 保存
+  if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+    event.preventDefault(); // 阻止浏览器默认的保存行为
+    if (selectedNote.value && !isSaving.value) {
+      saveNote();
+    }
+  }
+};
+
 onMounted(() => {
   loadNotes();
+  // 添加键盘事件监听器
+  document.addEventListener('keydown', handleKeydown);
 });
 
 onUnmounted(() => {
@@ -395,6 +408,8 @@ onUnmounted(() => {
   if (vditor.value) {
     vditor.value.destroy();
   }
+  // 移除键盘事件监听器
+  document.removeEventListener('keydown', handleKeydown);
 });
 </script>
 
@@ -695,6 +710,13 @@ onUnmounted(() => {
   font-size: 14px;
   font-weight: 500;
   animation: fadeInOut 2s ease-in-out;
+}
+
+.save-hint {
+  color: #666;
+  font-size: 12px;
+  font-weight: 400;
+  opacity: 0.8;
 }
 
 @keyframes fadeInOut {
