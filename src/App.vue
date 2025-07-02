@@ -24,6 +24,8 @@
           @update-title="updateNoteTitle"
           @cancel-edit="cancelEditTitle"
           @context-menu="showContextMenu"
+          @drag-start="handleDragStart"
+          @drop="handleDrop"
         />
       </div>
       
@@ -302,7 +304,12 @@ const selectNote = async (note: Note) => {
 const createNewNote = async () => {
   try {
     isNoteLoading.value = true; // 开始加载
-    const newNote = await noteService.createNote('新笔记', '');
+    
+    // 计算新笔记的排序权重（放在最后）
+    const rootNotes = notes.value.filter(n => !n.user_metadata?.parent_id);
+    const newOrder = calculateNewOrder(rootNotes, null, 'after');
+    
+    const newNote = await noteService.createNote('新笔记', '', { order: newOrder });
     if (newNote) {
       // 重新加载笔记列表以确保数据一致性
       await loadNotes();
@@ -451,7 +458,11 @@ const createNewNoteInContext = async () => {
     // 如果右键点击的是笔记，则在该笔记下创建子笔记
     const parentId = contextMenu.value.item?.key || '';
     
-    const newNote = await noteService.createNote('新笔记', '', parentId);
+    // 计算新笔记的排序权重
+    const siblingNotes = notes.value.filter(n => n.user_metadata?.parent_id === parentId);
+    const newOrder = calculateNewOrder(siblingNotes, null, 'after');
+    
+    const newNote = await noteService.createNote('新笔记', '', parentId, { order: newOrder });
     if (newNote) {
       await loadNotes();
       const createdNote = notes.value.find(n => n.key === newNote.key);
@@ -494,6 +505,174 @@ const deleteContextItem = async () => {
     }
   }
   contextMenu.value.show = false;
+};
+
+// 计算新的排序权重
+const calculateNewOrder = (notes: Note[], targetNote: Note | null, position: 'before' | 'after' | 'inside'): string => {
+  // 按现有排序权重排序
+  const sortedNotes = [...notes].sort((a, b) => {
+    const orderA = a.user_metadata?.order || '0';
+    const orderB = b.user_metadata?.order || '0';
+    return orderA.localeCompare(orderB);
+  });
+  
+  if (position === 'inside') {
+    // 放在最后
+    if (sortedNotes.length === 0) {
+      return '1';
+    }
+    const lastOrder = sortedNotes[sortedNotes.length - 1].user_metadata?.order || '0';
+    return (parseInt(lastOrder) + 1).toString();
+  }
+  
+  if (!targetNote) {
+    // 没有目标笔记，放在最后
+    if (sortedNotes.length === 0) {
+      return '1';
+    }
+    const lastOrder = sortedNotes[sortedNotes.length - 1].user_metadata?.order || '0';
+    return (parseInt(lastOrder) + 1).toString();
+  }
+  
+  // 找到目标笔记在排序列表中的位置
+  const targetIndex = sortedNotes.findIndex(n => n.key === targetNote.key);
+  if (targetIndex === -1) {
+    // 目标笔记不在列表中，放在最后
+    if (sortedNotes.length === 0) {
+      return '1';
+    }
+    const lastOrder = sortedNotes[sortedNotes.length - 1].user_metadata?.order || '0';
+    return (parseInt(lastOrder) + 1).toString();
+  }
+  
+  if (position === 'before') {
+    // 放在目标笔记前面
+    if (targetIndex === 0) {
+      // 目标笔记是第一个，放在最前面
+      const firstOrder = sortedNotes[0].user_metadata?.order || '0';
+      return (parseInt(firstOrder) - 1).toString();
+    } else {
+      // 放在前一个笔记和目标笔记之间
+      const prevOrder = sortedNotes[targetIndex - 1].user_metadata?.order || '0';
+      const targetOrder = sortedNotes[targetIndex].user_metadata?.order || '0';
+      return ((parseInt(prevOrder) + parseInt(targetOrder)) / 2).toString();
+    }
+  } else {
+    // 放在目标笔记后面
+    if (targetIndex === sortedNotes.length - 1) {
+      // 目标笔记是最后一个，放在最后面
+      const lastOrder = sortedNotes[sortedNotes.length - 1].user_metadata?.order || '0';
+      return (parseInt(lastOrder) + 1).toString();
+    } else {
+      // 放在目标笔记和后一个笔记之间
+      const targetOrder = sortedNotes[targetIndex].user_metadata?.order || '0';
+      const nextOrder = sortedNotes[targetIndex + 1].user_metadata?.order || '0';
+      return ((parseInt(targetOrder) + parseInt(nextOrder)) / 2).toString();
+    }
+  }
+};
+
+// 拖拽事件处理
+const handleDragStart = (note: Note) => {
+  // 可以在这里添加拖拽开始时的逻辑
+  console.log('开始拖拽笔记:', note.key);
+};
+
+const handleDrop = async (data: { draggedKey: string; targetKey: string; position: 'before' | 'after' | 'inside' }) => {
+  try {
+    const { draggedKey, targetKey, position } = data;
+    
+    // 获取拖拽的笔记
+    const draggedNote = notes.value.find(n => n.key === draggedKey);
+    if (!draggedNote) return;
+    
+    // 如果 targetKey 为空，表示拖拽到根级别
+    if (!targetKey) {
+      // 获取当前笔记的完整元数据
+      const currentMetadata = draggedNote.user_metadata || {};
+      
+      // 计算新的排序权重（放在最后）
+      const rootNotes = notes.value.filter(n => !n.user_metadata?.parent_id);
+      const newOrder = calculateNewOrder(rootNotes, null, 'after');
+      
+      // 更新笔记的父级关系为根级别（空字符串）
+      const updatedNote = await noteService.updateNoteTitle(
+        draggedKey, 
+        currentMetadata.title || '新笔记', 
+        {
+          ...currentMetadata,
+          parent_id: '',
+          order: newOrder
+        }
+      );
+      
+      if (updatedNote) {
+        await loadNotes();
+      }
+      return;
+    }
+    
+    // 获取目标笔记
+    const targetNote = notes.value.find(n => n.key === targetKey);
+    if (!targetNote) return;
+    
+    // 防止拖拽到自己或自己的子笔记
+    if (draggedKey === targetKey) return;
+    
+    // 检查是否拖拽到自己的子笔记
+    const isChildOfDragged = (noteKey: string, parentKey: string): boolean => {
+      const note = notes.value.find(n => n.key === noteKey);
+      if (!note) return false;
+      const parentId = note.user_metadata?.parent_id;
+      if (!parentId) return false;
+      if (parentId === parentKey) return true;
+      return isChildOfDragged(parentId, parentKey);
+    };
+    
+    if (isChildOfDragged(targetKey, draggedKey)) {
+      console.log('不能拖拽到自己的子笔记下');
+      return;
+    }
+    
+    // 计算新的父级ID和排序权重
+    let newParentId = '';
+    let newOrder = '';
+    
+    if (position === 'inside') {
+      // 拖拽到笔记内部，成为子笔记
+      newParentId = targetKey;
+      // 计算在目标笔记下的新排序权重
+      const childNotes = notes.value.filter(n => n.user_metadata?.parent_id === targetKey);
+      newOrder = calculateNewOrder(childNotes, null, 'after');
+    } else {
+      // 拖拽到笔记前后，保持与目标笔记相同的父级
+      newParentId = targetNote.user_metadata?.parent_id || '';
+      // 计算在同一父级下的新排序权重
+      const siblingNotes = notes.value.filter(n => n.user_metadata?.parent_id === newParentId);
+      newOrder = calculateNewOrder(siblingNotes, targetNote, position);
+    }
+    
+    // 获取当前笔记的完整元数据
+    const currentMetadata = draggedNote.user_metadata || {};
+    
+    // 更新笔记的父级关系和排序权重，保持其他元数据不变
+    const updatedNote = await noteService.updateNoteTitle(
+      draggedKey, 
+      currentMetadata.title || '新笔记', 
+      {
+        ...currentMetadata,
+        parent_id: newParentId,
+        order: newOrder
+      }
+    );
+    
+    if (updatedNote) {
+      // 重新加载笔记列表以反映新的层级结构
+      await loadNotes();
+    }
+  } catch (error) {
+    console.error('Failed to handle drop:', error);
+  }
 };
 
 // 点击外部关闭右键菜单

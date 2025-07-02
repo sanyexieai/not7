@@ -1,10 +1,23 @@
 <template>
   <div class="note-tree-node">
     <div 
-      :class="['note-item', { active: selectedNote?.key === note.key }]"
+      :class="['note-item', { 
+        active: selectedNote?.key === note.key,
+        'drag-over': dragOver,
+        'drag-over-before': dragPosition === 'before',
+        'drag-over-after': dragPosition === 'after',
+        'drag-over-inside': dragPosition === 'inside'
+      }]"
       :data-note-key="note.key"
       @click="handleClick"
       @contextmenu.stop="handleContextMenu"
+      draggable="true"
+      @dragstart="handleDragStart"
+      @dragover="handleDragOver"
+      @dragenter="handleDragEnter"
+      @dragleave="handleDragLeave"
+      @drop="handleDrop"
+      @dragend="handleDragEnd"
     >
       <div class="note-title">
         <input
@@ -44,6 +57,8 @@
           @update-title="updateNoteTitle"
           @cancel-edit="cancelEditTitle"
           @context-menu="showContextMenu"
+          @drag-start="(note) => emit('drag-start', note)"
+          @drop="(data) => emit('drop', data)"
         />
       </div>
     </div>
@@ -69,15 +84,26 @@ interface Emits {
   (e: 'update-title', key: string, title: string): void;
   (e: 'cancel-edit'): void;
   (e: 'context-menu', event: MouseEvent, note: Note | null): void;
+  (e: 'drag-start', note: Note): void;
+  (e: 'drop', data: { draggedKey: string; targetKey: string; position: 'before' | 'after' | 'inside' }): void;
 }
 
 const emit = defineEmits<Emits>();
 
 const titleInputs = ref<Map<string, HTMLInputElement>>(new Map());
 
-// 获取子笔记
+// 拖拽相关状态
+const dragOver = ref(false);
+const dragPosition = ref<'before' | 'after' | 'inside' | null>(null);
+
+// 获取子笔记，按排序权重排序
 const childNotes = computed(() => {
-  return props.allNotes.filter(note => note.user_metadata?.parent_id === props.note.key);
+  const childNotes = props.allNotes.filter(note => note.user_metadata?.parent_id === props.note.key);
+  return childNotes.sort((a, b) => {
+    const orderA = a.user_metadata?.order || '0';
+    const orderB = b.user_metadata?.order || '0';
+    return orderA.localeCompare(orderB);
+  });
 });
 
 // 获取笔记标题
@@ -138,6 +164,84 @@ const cancelEditTitle = () => {
 
 const showContextMenu = (event: MouseEvent, note: Note | null) => {
   emit('context-menu', event, note);
+};
+
+// 拖拽事件处理
+const handleDragStart = (event: DragEvent) => {
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', props.note.key);
+  }
+  emit('drag-start', props.note);
+};
+
+const handleDragOver = (event: DragEvent) => {
+  event.preventDefault();
+  if (!event.dataTransfer) return;
+  
+  event.dataTransfer.dropEffect = 'move';
+  
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const y = event.clientY - rect.top;
+  const height = rect.height;
+  
+  // 判断拖拽位置
+  if (y < height * 0.3) {
+    dragPosition.value = 'before';
+  } else if (y > height * 0.7) {
+    dragPosition.value = 'after';
+  } else {
+    dragPosition.value = 'inside';
+  }
+  
+  dragOver.value = true;
+};
+
+const handleDragEnter = (event: DragEvent) => {
+  event.preventDefault();
+  dragOver.value = true;
+};
+
+const handleDragLeave = (event: DragEvent) => {
+  event.preventDefault();
+  // 只有当鼠标真正离开元素时才清除状态
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const x = event.clientX;
+  const y = event.clientY;
+  
+  if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+    dragOver.value = false;
+    dragPosition.value = null;
+  }
+};
+
+const handleDrop = (event: DragEvent) => {
+  event.preventDefault();
+  event.stopPropagation(); // 阻止事件冒泡
+  
+  if (event.dataTransfer) {
+    const draggedKey = event.dataTransfer.getData('text/plain');
+    
+    if (draggedKey && draggedKey !== props.note.key) {
+      // 在清除状态之前获取位置
+      const position = dragPosition.value || 'after';
+      
+      // 清除拖拽状态
+      dragOver.value = false;
+      dragPosition.value = null;
+      
+      emit('drop', {
+        draggedKey,
+        targetKey: props.note.key,
+        position
+      });
+    }
+  }
+};
+
+const handleDragEnd = () => {
+  dragOver.value = false;
+  dragPosition.value = null;
 };
 </script>
 
@@ -224,5 +328,23 @@ const showContextMenu = (event: MouseEvent, note: Note | null) => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* 拖拽样式 */
+.note-item.drag-over {
+  background: rgba(25, 118, 210, 0.1);
+}
+
+.note-item.drag-over-before {
+  border-top: 2px solid var(--primary, #1976d2);
+}
+
+.note-item.drag-over-after {
+  border-bottom: 2px solid var(--primary, #1976d2);
+}
+
+.note-item.drag-over-inside {
+  background: rgba(25, 118, 210, 0.1);
+  border: 2px dashed var(--primary, #1976d2);
 }
 </style> 

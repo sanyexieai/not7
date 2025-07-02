@@ -94,21 +94,30 @@ class NoteService {
   }
 
   // 创建新笔记
-  async createNote(title: string, content: string = '', parentId: string = ''): Promise<Note | null> {
+  async createNote(title: string, content: string = '', parentId: string = '', extraMeta: Record<string, any> = {}): Promise<Note | null> {
     const timestamp = Date.now();
     const randomId = Math.random().toString(36).substring(2, 15);
     // 使用随机ID作为文件名
     const key = `${randomId}.md`;
     
     // 直接保存内容，标题存储在元数据中
-    return await this.saveNote(key, title, content, parentId);
+    return await this.saveNote(key, title, content, parentId, extraMeta);
   }
 
   // 保存笔记
-  async saveNote(key: string, title: string, content: string, parentId: string = ''): Promise<Note | null> {
+  async saveNote(key: string, title: string, content: string, parentId: string = '', extraMeta: Record<string, any> = {}): Promise<Note | null> {
     await this.ensureBucketExists();
     
     try {
+      // 先获取当前元数据以保持其他字段
+      let currentMetadata = {};
+      try {
+        const metadataResponse = await apiClient.get(`/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`);
+        currentMetadata = metadataResponse.data.data?.user_metadata || {};
+      } catch (error) {
+        // 如果获取元数据失败，使用空对象
+      }
+      
       // 先上传内容
       const response = await apiClient.put(
         `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}?deduplication_mode=allow`,
@@ -120,9 +129,15 @@ class NoteService {
         }
       );
       
-      // 然后更新元数据，添加标题和父级ID
+      // 然后更新元数据，保持现有元数据并更新标题、父级ID和额外元数据
       if (response.data.data) {
-        await this.updateNoteTitle(key, title, { parent_id: parentId });
+        const updatedMetadata = {
+          ...currentMetadata,
+          title,
+          parent_id: parentId,
+          ...extraMeta
+        };
+        await this.updateNoteTitle(key, title, updatedMetadata);
         // 重新获取更新后的对象信息
         const metadataResponse = await apiClient.get(`/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`);
         return metadataResponse.data.data;
@@ -163,7 +178,8 @@ class NoteService {
   // 更新笔记标题（只更新元数据）
   async updateNoteTitle(key: string, title: string, extraMeta: Record<string, any> = {}): Promise<Note | null> {
     try {
-      const user_metadata = { title, ...extraMeta };
+      // 如果 extraMeta 包含完整的元数据，直接使用
+      const user_metadata = extraMeta.title !== undefined ? extraMeta : { title, ...extraMeta };
       const response = await apiClient.put(
         `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`,
         {

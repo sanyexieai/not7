@@ -1,5 +1,9 @@
 <template>
-  <div class="notes-tree">
+    <div 
+    class="notes-tree" 
+    @dragover="handleDragOver"
+    @drop="handleDropToRoot"
+  >
     <div 
       v-for="note in rootNotes" 
       :key="note.id"
@@ -15,6 +19,8 @@
         @update-title="updateNoteTitle"
         @cancel-edit="cancelEditTitle"
         @context-menu="showContextMenu"
+        @drag-start="handleDragStart"
+        @drop="handleDrop"
       />
     </div>
   </div>
@@ -39,13 +45,20 @@ interface Emits {
   (e: 'update-title', key: string, title: string): void;
   (e: 'cancel-edit'): void;
   (e: 'context-menu', event: MouseEvent, note: Note | null): void;
+  (e: 'drag-start', note: Note): void;
+  (e: 'drop', data: { draggedKey: string; targetKey: string; position: 'before' | 'after' | 'inside' }): void;
 }
 
 const emit = defineEmits<Emits>();
 
-// 获取根笔记（没有父级的笔记）
+// 获取根笔记（没有父级的笔记），按排序权重排序
 const rootNotes = computed(() => {
-  return props.notes.filter(note => !note.user_metadata?.parent_id);
+  const rootNotes = props.notes.filter(note => !note.user_metadata?.parent_id);
+  return rootNotes.sort((a, b) => {
+    const orderA = a.user_metadata?.order || '0';
+    const orderB = b.user_metadata?.order || '0';
+    return orderA.localeCompare(orderB);
+  });
 });
 
 const selectNote = (note: Note) => {
@@ -66,6 +79,35 @@ const cancelEditTitle = () => {
 
 const showContextMenu = (event: MouseEvent, note: Note | null) => {
   emit('context-menu', event, note);
+};
+
+const handleDragStart = (note: Note) => {
+  emit('drag-start', note);
+};
+
+const handleDrop = (data: { draggedKey: string; targetKey: string; position: 'before' | 'after' | 'inside' }) => {
+  emit('drop', data);
+};
+
+const handleDragOver = (event: DragEvent) => {
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'move';
+  }
+};
+
+const handleDropToRoot = (event: DragEvent) => {
+  event.preventDefault();
+  if (event.dataTransfer) {
+    const draggedKey = event.dataTransfer.getData('text/plain');
+    if (draggedKey) {
+      emit('drop', {
+        draggedKey,
+        targetKey: '',
+        position: 'after'
+      });
+    }
+  }
 };
 </script>
 
