@@ -56,7 +56,7 @@ Not7 是一个基于 Vue 3 + Tauri 构建的现代化笔记应用，支持 Markd
 
 1. **克隆项目**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/sanyexieai/not7.git
    cd not7
    ```
 
