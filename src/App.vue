@@ -130,7 +130,8 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, onUnmounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { noteService, type Note } from './api/noteService';
+import { getNoteService, trySwitchToLocalMode, setNoteServiceMode, getNoteServiceMode } from './api/noteService';
+import type { Note } from './api/noteService';
 import NoteTree from './components/NoteTree.vue';
 import 'vditor/dist/index.css';
 
@@ -191,9 +192,20 @@ const formatDate = (dateString: string) => {
 const loadNotes = async () => {
   isLoading.value = true;
   try {
-    notes.value = await noteService.getNotes();
+    notes.value = await getNoteService().getNotes();
   } catch (error) {
-    console.error('Failed to load notes:', error);
+    debugger;
+    if (getNoteServiceMode() === 'remote') {
+      await trySwitchToLocalMode();
+      // 切换本地后只再尝试一次
+      try {
+        notes.value = await getNoteService().getNotes();
+      } catch {
+        notes.value = [];
+      }
+    } else {
+      notes.value = [];
+    }
   } finally {
     isLoading.value = false;
   }
@@ -263,7 +275,7 @@ const selectNote = async (note: Note) => {
   
   try {
     // 先获取笔记内容，确保文件完全下载
-    const content = await noteService.getNoteContent(note.key);
+    const content = await getNoteService().getNoteContent(note.key);
     
     // 确保 Vditor 已初始化
     if (!vditor.value) {
@@ -303,13 +315,23 @@ const selectNote = async (note: Note) => {
 
 const createNewNote = async () => {
   try {
+    // 新建笔记前确保模式正确
+    if (getNoteServiceMode() === 'remote') {
+      try {
+        await getNoteService().getNotes();
+      } catch {
+        await trySwitchToLocalMode();
+      }
+    }
+    console.log('新建笔记前 当前模式:', getNoteServiceMode());
+    console.log('新建笔记前 当前 service:', getNoteService());
     isNoteLoading.value = true; // 开始加载
-    
     // 计算新笔记的排序权重（放在最后）
     const rootNotes = notes.value.filter(n => !n.user_metadata?.parent_id);
     const newOrder = calculateNewOrder(rootNotes, null, 'after');
-    
-    const newNote = await noteService.createNote('新笔记', '', { order: newOrder });
+    const newNote = await getNoteService().createNote('新笔记', '', '', { order: newOrder });
+    console.log('新建笔记后 当前模式:', getNoteServiceMode());
+    console.log('新建笔记后 当前 service:', getNoteService());
     if (newNote) {
       // 重新加载笔记列表以确保数据一致性
       await loadNotes();
@@ -339,7 +361,7 @@ const saveNote = async () => {
     const content = vditor.value.getValue();
     // 使用当前笔记的标题，而不是从内容中提取
     const currentTitle = getNoteTitleSync(selectedNote.value.key);
-    const updatedNote = await noteService.updateNote(
+    const updatedNote = await getNoteService().updateNote(
       selectedNote.value.key,
       currentTitle,
       content
@@ -367,7 +389,7 @@ const deleteCurrentNote = async () => {
   if (confirm('确定要删除这个笔记吗？')) {
     try {
       isNoteLoading.value = true; // 开始加载
-      const success = await noteService.deleteNote(selectedNote.value.key);
+      const success = await getNoteService().deleteNote(selectedNote.value.key);
       if (success) {
         notes.value = notes.value.filter(n => n.key !== selectedNote.value!.key);
         selectedNote.value = null;
@@ -406,7 +428,7 @@ const startEditTitle = async (key: string) => {
 const updateNoteTitle = async (key: string, newTitle: string) => {
   try {
     // 使用专门的更新标题API
-    const updatedNote = await noteService.updateNoteTitle(key, newTitle);
+    const updatedNote = await getNoteService().updateNoteTitle(key, newTitle);
     if (updatedNote) {
       const index = notes.value.findIndex(n => n.key === key);
       if (index !== -1) {
@@ -462,7 +484,7 @@ const createNewNoteInContext = async () => {
     const siblingNotes = notes.value.filter(n => n.user_metadata?.parent_id === parentId);
     const newOrder = calculateNewOrder(siblingNotes, null, 'after');
     
-    const newNote = await noteService.createNote('新笔记', '', parentId, { order: newOrder });
+    const newNote = await getNoteService().createNote('新笔记', '', parentId, { order: newOrder });
     if (newNote) {
       await loadNotes();
       const createdNote = notes.value.find(n => n.key === newNote.key);
@@ -489,7 +511,7 @@ const deleteContextItem = async () => {
   if (contextMenu.value.item) {
     if (confirm('确定要删除这个项目吗？')) {
       try {
-        const success = await noteService.deleteNote(contextMenu.value.item.key);
+        const success = await getNoteService().deleteNote(contextMenu.value.item.key);
         if (success) {
           notes.value = notes.value.filter(n => n.key !== contextMenu.value.item!.key);
           if (selectedNote.value?.key === contextMenu.value.item.key) {
@@ -596,7 +618,7 @@ const handleDrop = async (data: { draggedKey: string; targetKey: string; positio
       const newOrder = calculateNewOrder(rootNotes, null, 'after');
       
       // 更新笔记的父级关系为根级别（空字符串）
-      const updatedNote = await noteService.updateNoteTitle(
+      const updatedNote = await getNoteService().updateNoteTitle(
         draggedKey, 
         currentMetadata.title || '新笔记', 
         {
@@ -656,7 +678,7 @@ const handleDrop = async (data: { draggedKey: string; targetKey: string; positio
     const currentMetadata = draggedNote.user_metadata || {};
     
     // 更新笔记的父级关系和排序权重，保持其他元数据不变
-    const updatedNote = await noteService.updateNoteTitle(
+    const updatedNote = await getNoteService().updateNoteTitle(
       draggedKey, 
       currentMetadata.title || '新笔记', 
       {
@@ -693,11 +715,15 @@ const handleKeydown = (event: KeyboardEvent) => {
   }
 };
 
-onMounted(() => {
-  loadNotes();
-  // 添加键盘事件监听器
+onMounted(async () => {
+  try {
+    await loadNotes();
+    setNoteServiceMode('remote');
+  } catch {
+    await trySwitchToLocalMode();
+    await loadNotes(); // 切换本地后再加载一次，确保 UI 响应
+  }
   document.addEventListener('keydown', handleKeydown);
-  // 添加点击外部关闭右键菜单监听器
   document.addEventListener('click', handleClickOutside);
 });
 

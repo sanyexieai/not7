@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { LocalNoteService } from './localNoteService';
+import { ref } from 'vue';
 
 const API_BASE = 'http://127.0.0.1:8000/api';
 const BUCKET_NAME = 'not7';
@@ -37,6 +39,30 @@ export interface NoteContent {
   updated_at: string;
 }
 
+// ========== 自动切换逻辑 ===========
+export type NoteServiceType = 'remote' | 'local';
+
+export const currentMode = ref<NoteServiceType>('remote');
+const localNoteService = new LocalNoteService();
+let remoteNoteService: NoteService | null = null;
+
+export function getNoteService() {
+  return currentMode.value === 'remote' ? remoteNoteService : localNoteService;
+}
+
+export function setNoteServiceMode(mode: NoteServiceType) {
+  currentMode.value = mode;
+}
+
+export function getNoteServiceMode() {
+  return currentMode.value;
+}
+
+export async function trySwitchToLocalMode() {
+  setNoteServiceMode('local');
+}
+
+// ========== NoteService 原有实现 ===========
 class NoteService {
   private bucketName = BUCKET_NAME;
 
@@ -58,13 +84,12 @@ class NoteService {
   // 获取所有笔记列表
   async getNotes(): Promise<Note[]> {
     await this.ensureBucketExists();
-    
     try {
       const response = await apiClient.get(`/buckets/${this.bucketName}/objects`);
       return response.data.data.objects || [];
     } catch (error) {
       console.error('Failed to get notes:', error);
-      return [];
+      throw error;
     }
   }
 
@@ -74,15 +99,11 @@ class NoteService {
       console.log('Downloading note content for key:', key);
       const url = `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}`;
       console.log('Request URL:', url);
-      
       const response = await apiClient.get(url, { responseType: 'text' });
-      
       const content = response.data;
       console.log('Downloaded content length:', content?.length || 0);
-      
-      // 返回完整的 Markdown 内容，标题存储在元数据中
       return {
-        title: '', // 标题存储在 user_metadata 中，由前端获取
+        title: '',
         content: content,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -95,30 +116,22 @@ class NoteService {
 
   // 创建新笔记
   async createNote(title: string, content: string = '', parentId: string = '', extraMeta: Record<string, any> = {}): Promise<Note | null> {
+    console.log('Creating new note with params:', { title, content, parentId, extraMeta });
     const timestamp = Date.now();
     const randomId = Math.random().toString(36).substring(2, 15);
-    // 使用随机ID作为文件名
     const key = `${randomId}.md`;
-    
-    // 直接保存内容，标题存储在元数据中
-    return await this.saveNote(key, title, content, parentId, extraMeta);
+    console.log('Generated key:', key);
+    const result = await this.saveNote(key, title, content, parentId, extraMeta);
+    console.log('Create note result:', result);
+    return result;
   }
 
   // 保存笔记
   async saveNote(key: string, title: string, content: string, parentId: string = '', extraMeta: Record<string, any> = {}): Promise<Note | null> {
+    console.log('Saving note with key:', key);
     await this.ensureBucketExists();
-    
     try {
-      // 先获取当前元数据以保持其他字段
-      let currentMetadata = {};
-      try {
-        const metadataResponse = await apiClient.get(`/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`);
-        currentMetadata = metadataResponse.data.data?.user_metadata || {};
-      } catch (error) {
-        // 如果获取元数据失败，使用空对象
-      }
-      
-      // 先上传内容
+      console.log('Uploading content...');
       const response = await apiClient.put(
         `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}?deduplication_mode=allow`,
         content,
@@ -128,21 +141,19 @@ class NoteService {
           }
         }
       );
-      
-      // 然后更新元数据，保持现有元数据并更新标题、父级ID和额外元数据
+      console.log('Content upload response:', response.data);
       if (response.data.data) {
         const updatedMetadata = {
-          ...currentMetadata,
           title,
           parent_id: parentId,
           ...extraMeta
         };
+        console.log('Updating metadata:', updatedMetadata);
         await this.updateNoteTitle(key, title, updatedMetadata);
-        // 重新获取更新后的对象信息
         const metadataResponse = await apiClient.get(`/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`);
+        console.log('Final metadata response:', metadataResponse.data);
         return metadataResponse.data.data;
       }
-      
       return response.data.data;
     } catch (error) {
       console.error('Failed to save note:', error);
@@ -163,14 +174,12 @@ class NoteService {
 
   // 更新笔记
   async updateNote(key: string, title: string, content: string): Promise<Note | null> {
-    // 先获取当前笔记的元数据以保持 parent_id
     try {
       const metadataResponse = await apiClient.get(`/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`);
       const currentNote = metadataResponse.data.data;
       const parentId = currentNote?.user_metadata?.parent_id || '';
       return await this.saveNote(key, title, content, parentId);
     } catch (error) {
-      // 如果获取元数据失败，使用空字符串作为 parent_id
       return await this.saveNote(key, title, content, '');
     }
   }
@@ -178,7 +187,6 @@ class NoteService {
   // 更新笔记标题（只更新元数据）
   async updateNoteTitle(key: string, title: string, extraMeta: Record<string, any> = {}): Promise<Note | null> {
     try {
-      // 如果 extraMeta 包含完整的元数据，直接使用
       const user_metadata = extraMeta.title !== undefined ? extraMeta : { title, ...extraMeta };
       const response = await apiClient.put(
         `/buckets/${this.bucketName}/objects/${encodeURIComponent(key)}/metadata`,
@@ -191,15 +199,12 @@ class NoteService {
           }
         }
       );
-      
       return response.data.data;
     } catch (error) {
       console.error('Failed to update note title:', error);
       return null;
     }
   }
-
-
 
   // 获取笔记元数据
   async getNoteMetadata(key: string): Promise<Note | null> {
@@ -213,4 +218,4 @@ class NoteService {
   }
 }
 
-export const noteService = new NoteService();
+remoteNoteService = new NoteService();
