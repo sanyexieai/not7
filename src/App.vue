@@ -124,16 +124,20 @@
         <p>点击左侧"新建笔记"开始记录你的想法</p>
       </div>
     </main>
+    <button class="mode-switch-btn" @click="toggleNoteServiceMode">
+      当前模式：{{ getNoteServiceMode() === 'local' ? '本地' : '网络' }}，点击切换
+    </button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, nextTick, onUnmounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { getNoteService, trySwitchToLocalMode, setNoteServiceMode, getNoteServiceMode } from './api/noteService';
+import { getNoteService, setNoteServiceMode, getNoteServiceMode } from './api/noteService';
 import type { Note } from './api/noteService';
 import NoteTree from './components/NoteTree.vue';
 import 'vditor/dist/index.css';
+import { LocalNoteService } from './api/localNoteService';
 
 // 路由相关
 const router = useRouter();
@@ -169,6 +173,8 @@ const contextMenu = ref({
   item: null as Note | null
 });
 
+const LOCAL_MODE_KEY = 'not7_note_mode';
+
 const getNoteTitleSync = (key: string) => {
   // 从笔记列表中查找对应的笔记，获取其 user_metadata 中的标题
   const note = notes.value.find(n => n.key === key);
@@ -194,18 +200,8 @@ const loadNotes = async () => {
   try {
     notes.value = await getNoteService().getNotes();
   } catch (error) {
-    debugger;
-    if (getNoteServiceMode() === 'remote') {
-      await trySwitchToLocalMode();
-      // 切换本地后只再尝试一次
-      try {
-        notes.value = await getNoteService().getNotes();
-      } catch {
-        notes.value = [];
-      }
-    } else {
-      notes.value = [];
-    }
+    isLoading.value = false;
+    throw error;
   } finally {
     isLoading.value = false;
   }
@@ -260,42 +256,46 @@ const initVditor = async () => {
   }
 };
 
+let currentLoadingKey = '';
+
 const selectNote = async (note: Note) => {
   selectedNote.value = note;
-  
-  // 更新路由
-  if (route.name === 'Note') {
-    router.push({ name: 'Note', params: { key: note.key } });
-  } else {
-    router.push({ name: 'Home', query: { note: note.key } });
-  }
-  
-  isNoteLoading.value = true; // 开始加载
+  currentLoadingKey = note.key;
+  console.log('selectNote: 选中笔记', note.key);
+
+  isNoteLoading.value = true;
   await nextTick();
-  
+
   try {
-    // 先获取笔记内容，确保文件完全下载
     const content = await getNoteService().getNoteContent(note.key);
-    
-    // 确保 Vditor 已初始化
-    if (!vditor.value) {
-      await initVditor(); // 等待 Vditor 完全初始化
+    console.log('getNoteContent 返回内容:', content);
+
+    // 防抖：只处理最后一次选中的 key
+    if (note.key !== currentLoadingKey) {
+      console.log('跳过过时的内容加载:', note.key);
+      return;
     }
-    
+
+    if (!vditor.value) {
+      await initVditor();
+    }
+
     if (vditor.value) {
-      // 确保内容是字符串类型
       const contentText = content?.content || '';
-      
+      console.log('准备 setValue:', contentText);
+      console.log('vditor.value:', vditor.value);
+
       try {
         vditor.value.setValue(contentText);
         vditor.value.focus();
+        console.log('setValue 完成，当前编辑器内容：', vditor.value.getValue());
       } catch (setValueError) {
         console.error('Error setting Vditor value:', setValueError);
-        // 如果设置值失败，尝试重新初始化
         await initVditor();
         if (vditor.value) {
           vditor.value.setValue(contentText);
           vditor.value.focus();
+          console.log('setValue 完成 after re-init，当前编辑器内容：', vditor.value.getValue());
         }
       }
     }
@@ -309,7 +309,7 @@ const selectNote = async (note: Note) => {
       }
     }
   } finally {
-    isNoteLoading.value = false; // 结束加载
+    isNoteLoading.value = false;
   }
 };
 
@@ -317,11 +317,7 @@ const createNewNote = async () => {
   try {
     // 新建笔记前确保模式正确
     if (getNoteServiceMode() === 'remote') {
-      try {
-        await getNoteService().getNotes();
-      } catch {
-        await trySwitchToLocalMode();
-      }
+      await getNoteService().getNotes();
     }
     console.log('新建笔记前 当前模式:', getNoteServiceMode());
     console.log('新建笔记前 当前 service:', getNoteService());
@@ -715,13 +711,67 @@ const handleKeydown = (event: KeyboardEvent) => {
   }
 };
 
-onMounted(async () => {
-  try {
+const chooseLocalDir = async () => {
+  const localService = getNoteService() as LocalNoteService;
+  await localService.selectDirectory();
+  notes.value = await localService.getNotes();
+};
+
+const setAndPersistMode = async (mode: 'local' | 'remote') => {
+  setNoteServiceMode(mode);
+  localStorage.setItem(LOCAL_MODE_KEY, mode);
+
+  // 切换模式时销毁 Vditor
+  if (vditor.value) {
+    try {
+      vditor.value.destroy();
+    } catch {}
+    vditor.value = null;
+  }
+
+  if (mode === 'local') {
+    await chooseLocalDir();
+  } else {
     await loadNotes();
-    setNoteServiceMode('remote');
-  } catch {
-    await trySwitchToLocalMode();
-    await loadNotes(); // 切换本地后再加载一次，确保 UI 响应
+  }
+
+  // 切换模式后，如果有选中笔记，重新 selectNote
+  if (selectedNote.value) {
+    await selectNote(selectedNote.value);
+  }
+};
+
+const toggleNoteServiceMode = async () => {
+  if (getNoteServiceMode() === 'local') {
+    await setAndPersistMode('remote');
+  } else {
+    await setAndPersistMode('local');
+  }
+};
+
+onMounted(async () => {
+  // 读取本地存储的模式
+  const savedMode = localStorage.getItem(LOCAL_MODE_KEY) as 'local' | 'remote' | null;
+  if (savedMode === 'local') {
+    setNoteServiceMode('local');
+    await chooseLocalDir();
+  } else {
+    try {
+      await loadNotes();
+      setNoteServiceMode('remote');
+      localStorage.setItem(LOCAL_MODE_KEY, 'remote');
+      
+    } catch {
+      // 网络模式失败时弹窗询问
+      const goLocal = window.confirm('连接服务器失败，是否切换本地模式？');
+      if (goLocal) {
+        await setAndPersistMode('local');
+      } else {
+        setNoteServiceMode('remote');
+        localStorage.setItem(LOCAL_MODE_KEY, 'remote');
+        notes.value = [];
+      }
+    }
   }
   document.addEventListener('keydown', handleKeydown);
   document.addEventListener('click', handleClickOutside);
@@ -1168,20 +1218,6 @@ onUnmounted(() => {
   margin-right: 0;
 }
 
-.vditor-container {
-  flex: 1;
-  border-radius: 0 0 12px 0;
-  position: relative;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.sidebar.collapsed ~ .main-content .vditor-container {
-  border-radius: 0 0 12px 12px;
-  width: 100% !important;
-}
 
 .loading-overlay {
   position: absolute;
@@ -1376,41 +1412,24 @@ onUnmounted(() => {
 </style>
 
 <style>
-/* Vditor 样式覆盖 */
-#vditor {
-  border: none !important;
-  border-radius: 0 0 12px 0 !important;
+.mode-switch-btn {
+  position: fixed;
+  left: 24px;
+  bottom: 24px;
+  z-index: 9999;
+  background: #fff;
+  color: #1976d2;
+  border: 1px solid #1976d2;
+  border-radius: 6px;
+  padding: 8px 18px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 2px 8px 0 rgba(25, 118, 210, 0.08);
+  transition: background 0.2s, color 0.2s;
 }
-
-.sidebar.collapsed ~ .main-content #vditor {
-  border-radius: 0 0 12px 12px !important;
-  width: 100% !important;
-}
-
-#vditor .vditor-toolbar {
-  border-bottom: 1px solid #e5e7eb !important;
-  background: #fff !important;
-}
-
-#vditor .vditor-ir,
-#vditor .vditor-wysiwyg,
-#vditor .vditor-sv {
-  background: #fff !important;
-  color: #222 !important;
-}
-
-/* 深色模式支持 */
-@media (prefers-color-scheme: dark) {
-  #vditor .vditor-toolbar {
-    background: #23272e !important;
-    border-bottom-color: #404040 !important;
-  }
-  
-  #vditor .vditor-ir,
-  #vditor .vditor-wysiwyg,
-  #vditor .vditor-sv {
-    background: #23272e !important;
-    color: #e3e3e3 !important;
-  }
+.mode-switch-btn:hover {
+  background: #1976d2;
+  color: #fff;
 }
 </style>

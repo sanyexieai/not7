@@ -52,15 +52,21 @@ export function getNoteService() {
 
 export function setNoteServiceMode(mode: NoteServiceType) {
   currentMode.value = mode;
+  try {
+    localStorage.setItem('not7_note_mode', mode);
+  } catch {}
 }
 
 export function getNoteServiceMode() {
+  try {
+    const mode = localStorage.getItem('not7_note_mode') as NoteServiceType | null;
+    if (mode === 'local' || mode === 'remote') {
+      currentMode.value = mode;
+    }
+  } catch {}
   return currentMode.value;
 }
 
-export async function trySwitchToLocalMode() {
-  setNoteServiceMode('local');
-}
 
 // ========== NoteService 原有实现 ===========
 class NoteService {
